@@ -1,0 +1,384 @@
+# pipeR Tutorial
+
+```{r}
+library(tidyverse)
+library(pipeR)
+```
+
+## First Example 
+
+```{r}
+## bootstrap resampling over mpg
+
+## traditional
+sample_mtcars <- sample(mtcars$mpg, 10000, replace = TRUE)
+density_mtcars <- density(sample_mtcars, kernel = "gaussian")
+plot(density_mtcars, col = "red", main = "Density of MPG (bootstrap)")
+
+## nested
+plot(density(sample(mtcars$mpg, 10000, replace = TRUE), kernel = "gaussian"),
+     col = "red", main = "Density of MPG (bootstrap)")
+
+## pipe style 
+mtcars$mpg %>>%
+    sample(size = 10000, replace = TRUE) %>>%
+    density(kernel = "gaussian") %>>%
+    plot(col = "red", main = "Density of MPG (bootstrap)")
+
+## pipe style with filtering
+mtcars %>>%
+    subset(mpg >= quantile(mpg, 0.05) &
+           mpg <= quantile(mpg, 0.95)) %>>%
+    ## pull mpg?
+    (mpg) %>>%
+    sample(size = 10000, replace = TRUE) %>>%
+    density(kernel = "gaussian") %>>%
+    plot(col = "red", main = "Density of MPG (bootstrap)")
+```
+
+## Pipe Operator 
+
+The operator pipes the left hand side value to the right hand side expression which is evaluated according to its syntax. 
+
+%>>% supports piping LHS values:
+1. To the first argument of a function 
+2. To . in an expression 
+3. By formula to avoid ambiguity in symbol names
+4. To an expression only for its side effect 
+5. To an expression and save the intermediate results 
+6. To a symbol in order to extract that element 
+
+The behavior of the operator is fully determined by the syntax of the expression that follows the operator. 
+
+## Pipe to First Argument 
+
+```{r}
+## original
+set.seed(123)
+
+summary(sample(diff(log(rnorm(100, mean = 10))), size = 10000, replace = TRUE))
+
+## pipes 
+rnorm(100, mean = 10) %>>%
+    log %>>%
+    diff %>>%
+    sample(size = 10000, replace = TRUE) %>>%
+    summary
+
+## multiple outputs
+mtcars %>>%
+    (mpg) %>>%
+    plot(col = "red",
+         main = sprintf("Number of Points: %d", length(.)))
+
+## nesting in function calls
+mtcars %>>%
+    subset(mpg <= mpg %>>% quantile(0.95), c(mpg, wt)) %>>%
+    summary
+```
+
+## Pipe to Dot 
+
+```{r}
+## second arg example
+mtcars %>>%
+    {lm(mpg ~ cyl + wt, data = .)}
+
+mtcars %>>%
+    (lm(mpg ~ cyl + wt, data = .))
+```
+
+The difference between {} and () above is
+
+1. {} accepts more than one expression within the braces and its value is determined by the last one. () accepts only 1 expression.
+2. {} has only 1 feature: pipe to . in the enclosed expression. () has more features (coming soon)
+
+```{r}
+## demonstrate both
+mtcars %>>% {
+    model <- lm(mpg ~ wt + cyl, data = .)
+    summ <- summary(model)
+    summ[c("r.squared", "adj.r.squared")]
+}
+
+## returns last expression unless interrupted by a return
+mtcars %>>%
+    lm(formula = mpg ~ wt + cyl) %>>%
+    summary %>>% {
+        if (.$r.squared >= 0.8) return("Model A")
+        else cat("Model B should be considered.\n"); return("Model B")
+    }
+
+## side effects
+mtcars %>>% {
+    par(mfrow = c(1, 2))
+    .$mpg %>>% plot(col = "red", main = "mtcars (mpg)")
+    .$mpg %>>% hist(main = "distribution")
+}
+    
+## nested dots are determined by the working operator for that dot symbol
+mtcars %>>% {
+    par(mfrow = c(1, 2))
+    .$mpg %>>% plot(col = "red", main = sprintf("mtcars (mpg: %d)", length(.)))
+    .$mpg %>>% hist(main = "distribution")
+}
+```
+
+
+### Creating Closure 
+
+If a lambda function is enclosed, the pipeline will result in a closure, a function returns by a function (%>>%) which can be used more times. 
+
+```{r}
+## create a closure that takes 1 element
+mtcars %>>%
+    (mpg) %>>%
+    sample(size = 10000, replace = TRUE) %>>%
+    (function(kernel) {
+        . %>>%
+            density(kernel = kernel) %>>%
+            plot(main = sprintf("%s Kernel", kernel))
+    }) -> density_plot
+
+## return plots
+par(mfrow = c(1, 3))
+map(c("gaussian", "rectangular", "triangular"), ~ density_plot(.x))
+
+## %>>% will pipe the left value to the first arg of the closure
+1:10 %>>% (function(x, pow) x^pow)(2)
+
+mtcars %>>%
+    lm(formula = mpg ~ wt + cyl) %>>%
+    (function(model, warn_level) {
+        if (summary(model)$r.squared < warn_level)
+            warning("R Squared is too low", call. = FALSE)
+        model
+    })(0.9) %>>%
+     coef
+```
+
+# Pipe by Formula 
+
+```{r}
+## something like this could be confusing due to the double dot
+mtcars %>>%
+    (lm(mpg ~ ., data = .))
+
+
+## we can use a lambda function to represent the value being piped
+mtcars %>>%
+    (df ~ lm(mpg ~ ., data = df))
+
+## example mixing first arg piping and piping by formula
+mtcars %>>%
+    subset(select = c(mpg, wt, cyl)) %>>%
+    (x ~ lm(mpg ~ ., data = x))
+
+## example with brackets
+mtcars %>>%
+    subset(select = c(mpg, wt, cyl)) %>>%
+    (x ~ {
+        summ <- lm(mpg ~ ., x) %>>% summary()
+        list(n = nrow(x),
+             r.squared = summ$r.squared)})
+```
+
+## Pipe for Side Effect 
+
+%>>% provides a syntax to support side effect piping. The syntax is called a one-sided formula that starts with ~ to indicate that the right hand side expression will be evaluated only for its side effect. Its values will be ignored, and the input value will be returned instead. 
+
+```{r}
+mtcars %>>%
+    subset(mpg >= quantile(mpg, 0.05) &
+           mpg <= quantile(mpg, 0.95),
+           c(mpg, cyl, wt)) %>>%
+    ## cat returns NULL
+    (~ cat("Rows:", nrow(.), "\n")) %>>%
+    summary()
+```
+
+The (~ f(.)) syntax tells the operator that f(.) on the right of ~ should only be evaluated for its side effect with . representing the input value, and the input value, i.e. the filtered mtcars, should continue in the pipeline and be passed to summary. The design of the ~ expression syntax for side effects makes the one-sided formula a branch of the mainstream pipeline. 
+
+```{r}
+## example of plotting in the middle a pipeline as a side effect
+mtcars %>>%
+    subset(mpg >= quantile(mpg, 0.05) &
+           mpg <= quantile(mpg, 0.95),
+           c(mpg, cyl, wt)) %>>%
+    (~ plot(mpg ~ wt, data = .)) %>>%
+    lm(formula = mpg ~ wt) %>>%
+    summary()
+```
+
+### Lambda Expression 
+
+If you feel ambiguous using ., you can write a formula after ~ 
+
+```{r}
+mtcars %>>%
+    subset(mpg >= quantile(mpg, 0.05) &
+           mpg <= quantile(mpg, 0.95),
+           c(mpg, cyl, wt)) %>>%
+    (~ filtered ~ cat("Rows:", nrow(filtered), "\n")) %>>%
+    summary()
+```
+
+### String 
+
+```{r}
+## print a string in the middle of a pipeline
+mtcars %>>%
+    "Running linear model" %>>%
+    lm(formula = mpg ~ wt + cyl) %>>%
+    "Summarizing the model" %>>%
+    summary %>>%
+    coef
+
+## print strings to indicate working progress of the pipeline
+diamonds %>>%
+    "Filtering Data" %>>%
+    filter(carat >= quantile(carat, 0.05) &
+           carat <= quantile(carat, 0.95)) %>>%
+    (~ Sys.sleep(2)) %>>%
+    "Selecting Variables" %>>%
+    select(carat, price, depth) %>>%
+    (~ Sys.sleep(2)) %>>%
+    "Estimating Linear Model" %>>%
+    lm(formula = carat ~ price + depth) %>>%
+    (~ Sys.sleep(2)) %>>%
+    "Summarizing Model" %>>%
+    (~ Sys.sleep(2)) %>>%
+    summary()
+```
+
+### Question Mark 
+
+An easier way to print the intermediate value is to use the (? expr) syntax 
+
+```{r}
+## print intermediate values
+mtcars %>>%
+    subset(vs == 1, c(mpg, cyl, wt)) %>>%
+    (? nrow(.)) %>>%
+    (? data ~ ncol(data)) %>>%
+    summary()
+
+## reduce ambiguity with prefix strings
+mtcars %>>%
+    ("Raw Data Rows:" ? nrow(.)) %>>%
+    subset(vs == 1, c(mpg, cyl, wt)) %>>%
+    ("Filtered Data Rows:" ? nrow(.)) %>>%
+    lm(formula = mpg ~ cyl + wt)
+```
+
+### Stopping 
+
+Side effects are usually used on purpose not to influence the mainstream pipeline or workflow. In some cases however, such influence can be useful. An example is stopping. 
+
+```{r}
+## build an lm. Before making preds, check if R^2 > .5
+mtcars %>>%
+    subset(vs == 1, c(mpg, cyl, wt)) %>>%
+    lm(formula = mpg ~ cyl + wt) %>>%
+    (~ stopifnot(summary(.)$r.squared >= 0.5)) %>>%
+    predict(newdata = list(cyl = 4.45, wt = 3.0))
+
+## set threshold to 0.8
+mtcars %>>%
+    subset(vs == 1, c(mpg, cyl, wt)) %>>%
+    lm(formula = mpg ~ cyl + wt) %>>%
+    (~ stopifnot(summary(.)$r.squared >= 0.8)) %>>%
+    predict(newdata = list(cyl = 4.45, wt = 3.0))
+```
+
+### Debugging 
+
+Another way to use a side effect is debugging. 
+
+```{r}
+## go into debug mode in the middle of a pipeline
+mtcars %>>%
+    subset(vs == 1, c(mpg, cyl, wt)) %>>%
+    lm(formula = mpg ~ cyl + wt) %>>%
+    summary() %>>%
+    (~ browser(expr = .$r.squared < 0.8))
+```
+
+## Pipe with Assignment 
+
+Perhaps the most important side effect of all is assignment. 
+
+```{r}
+## assign intermediate steps
+mtcars %>>%
+    subset(select = c(mpg, wt, cyl)) %>>%
+    ## assign subsetted mtcars
+    (~ sub_mtcars) %>>%
+    lm(formula = mpg ~ wt + cyl) %>>%
+    (~ lm_cars) %>>%
+    summary()
+
+sub_mtcars
+lm_cars
+
+## assign the intermediate value under some transformation
+mtcars %>>%
+    subset(select = c(mpg, wt, cyl)) %>>%
+    ## side effect assignment
+    (~ summ <- summary(.)) %>>%
+    lm(formula = mpg ~ wt + cyl)
+
+## assignment using named lambda vars
+mtcars %>>%
+    subset(select = c(mpg, wt, cyl)) %>>%
+    (~ summ <- df ~ summary(df)) %>>%
+    lm(formula = mpg ~ wt + cyl)
+```
+
+What if one wants the result not only to be assigned to a symbol, but also to continue the flow to the next expression? 
+
+Two methods meet the demand: 
+1. Use (~ symbol) after the expression for assignment 
+2. Use (symbol = expression) to assign the value of expression to symbol
+
+```{r}
+## pipe and assignment. Pipes values to lm, and assigns lm to model
+mtcars %>>%
+    subset(select = c(mpg, wt, cyl)) %>>%
+    ## side effect assignment
+    (~ summ <- df ~ summary(df)) %>>%
+    ## pipe and assign
+    (model <- lm(mpg ~ wt + cyl, data = .))
+
+## use -> for assignment
+mtcars %>>%
+    (~ summary(.) -> summ)
+
+mtcars %>>%
+    ## side effect assignment
+    (~ summary(.) -> summ) %>>%
+    (lm(formula = mpg ~ wt + cyl, data = .) -> lm_mtcars) %>>%
+    summary()
+
+## piped assigment operators support subset and element assignment
+results <- list()
+
+mtcars %>>%
+    lm(formula = mpg ~ wt + cyl) %>>%
+    (~ results$mtcars <- . %>>% summary %>>% (r.squared))
+
+iris %>>%
+    lm(formula = Sepal.Length ~ Sepal.Width) %>>%
+    (~ results$iris <- . %>>% summary %>>% (r.squared))
+    
+results
+
+## set names and others
+numbers <- 1:5
+
+letters %>>%
+ sample(length(numbers)) %>>%
+ (~ . -> names(numbers))
+
+numbers
+```
