@@ -382,3 +382,111 @@ letters %>>%
 
 numbers
 ```
+
+## Extract Element 
+
+In some cases, one might need to extract an element from an object. The syntax x %>>% (y) indicates to extract the element named y from object x where y must be a valid symbol name, and x can be a vector, list, environment, or anything else that supports [[]]. 
+
+```{r}
+## example
+mtcars %>>%
+    (lm(mpg ~ wt + cyl, data = .)) %>>%
+    summary %>>%
+    (r.squared)
+
+## examples for vector, list, and environment
+list(a = 1, b = 2) %>>% (a)
+c(a = 1, b = 2) %>>% (a)
+
+env <- new.env()
+env$a <- 1; env$b <- 2
+env %>>% (a)
+
+## S4 object example
+
+## create a data generating process
+set.seed(0)
+x <- cumsum(rnorm(150))
+y <- 2 * x + rnorm(150) * 0.5
+matplot(cbind(x, y), type = "l")
+
+## perform an ADF test to test the cointegration relationship between two vectors on the residues of a linear model
+lm(y ~ x + 0) %>>%
+    residuals %>>%
+    ## s4 object
+    fUnitRoots::adfTest(type = "nc") %>>%
+    ## save test object to env
+    (~ testobj) %>>%
+    ## what class is it?
+    (? class(.)) %>>%
+    ## get testobj@test
+    (test) %>>%
+    ## get testobj@test$statistic
+    (statistic)
+```
+
+Since the syntax only accepts symbol name, to evaluate an expression with the piped object being the frame if it is a list or environment, using with() or within() can be helpful
+
+```{r}
+list(a = 1, b = 2) %>>%
+    with(a + 2 * b)
+```
+
+# Pipe Function 
+
+todo 
+
+## Pipe to First Argument 
+
+## Dot Function
+
+## Subsetting 
+
+# Pipeline 
+
+todo
+
+## Argument-based Pipeline 
+
+## Expression-based Pipeline 
+
+# Examples
+
+## dplyr
+
+```{r}
+# load data
+library(hflights)
+data(hflights)
+hflights %<>% as_tibble()
+```
+
+If we divide Distance by ActualElapsedTime we can get the actual flight speed. 
+
+```{r}
+hflights %>>%
+    filter(Cancelled == 0) %>>%
+    mutate(speed = Distance / ActualElapsedTime) %>>%
+    ## save to hflights2
+    (~ hflights2) %>>%
+    group_by(UniqueCarrier) %>>%
+    summarize(mean_speed = mean(speed, na.rm = TRUE)) %>>%
+    arrange(desc(mean_speed)) %>>%
+    with(barplot(mean_speed, names.arg = UniqueCarrier, main = "Average Flight Speed"))
+
+## account for destinations
+hflights2 %>>%
+    dcast(Year + Month + DayofMonth ~ UniqueCarrier,
+          value.var = "speed", fun.aggregate = mean) %>>%
+    subset(select = c(-1, -2, -3)) %>>%
+    ## save wide format data 
+    (~ hflights3) %>>%
+    list.sort(desc(median(., na.rm = TRUE))) %>>%
+    boxplot(main = "Boxplot of Flight Speed Sorted by Median")
+
+```
+
+## rlist 
+
+## rvest 
+
