@@ -484,9 +484,36 @@ hflights2 %>>%
     list.sort(desc(median(., na.rm = TRUE))) %>>%
     boxplot(main = "Boxplot of Flight Speed Sorted by Median")
 
+## check carriers that do and don't have stable speeds
+hflights3 %>>%
+    list.sort(sd(., na.rm = TRUE)) %>>%
+    boxplot(main = "Boxplot of Flight Speed Sorted by Std. Dev")
+
+## build a better qualification standard
+hflights3 %>>%
+    list.sort(desc(mean(., na.rm = TRUE) / sd(., na.rm = TRUE))) %>>%
+    boxplot(mean = "Boxplot of Flight Speed Sorted by mean / std dev")
+
+## for particular dest and origin, we can see which route is faster. This shows which destinations there are for which departing from HOU is on avg faster than from IAH
+hflights2 %>>%
+    dcast(Dest ~ Origin, mean, na.rm = TRUE, value.var = "speed") %>>%
+    na.omit() %>>%
+    filter(HOU > IAH) %>>%
+    (Dest)
 ```
 
-## rlist 
+## rlist
 
-## rvest 
+```{r}
+library(rlist)
+
+## get json data from Hadley's github api 
+repos <- "https://api.github.com/users/hadley/repos?per_page=100&page=%d" %>>%
+  sprintf(1:2) %>>%
+  list.load("json") %>>%
+  list.ungroup
+```
+
+
+## rvest
 
