@@ -507,13 +507,81 @@ hflights2 %>>%
 ```{r}
 library(rlist)
 
-## get json data from Hadley's github api 
+## get json data from Hadley's github api
 repos <- "https://api.github.com/users/hadley/repos?per_page=100&page=%d" %>>%
-  sprintf(1:2) %>>%
-  list.load("json") %>>%
-  list.ungroup
-```
+    sprintf(1:2) %>>%
+    list.load("json") %>>%
+    list.ungroup
 
+## check main languages of the repos
+repos %>>%
+    list.table(language) %>>%
+    list.sort(- .)
+
+## show the most watched active repos
+repos %>>%
+    list.update(updated_at = updated_at %>>%
+                    strptime("%Y-%m-%dT%H:%M:%SZ")) %>>%
+    list.filter(updated_at >= as.POSIXct(Sys.Date() - 30)) %>>%
+    (~ active_repos) %>>%
+    list.sort(-watchers) %>>%
+    list.take(10) %>>%
+    list.select(name, watchers) %>>%
+    list.stack() %>>%
+    (~ most_watched_repos) %>>%
+    with(barplot(watchers, names.arg = name,
+                 main = "Top 10 Packages with Most Watchers (total %d)" %>>% sprintf(sum(watchers))))
+
+## show repos mainly written in R with the most forks.
+active_repos %>>%
+    list.filter(language == "R") %>>%
+    list.sort(- forks) %>>%
+    list.take(10) %>>%
+    list.select(name, forks) %>>%
+    list.stack %>>%
+    with(barplot(forks, names.arg = name,
+                 main = "Top 10 packages with most forks (total: %d)" %>>% sprintf(sum(forks))))
+
+## see popularity for repos containing the name plot or vis and arrange by count of stargazers
+repos %>>%
+    list.filter(!fork) %>>%
+    list.filter(grepl("plot|vis", name)) %>>%
+    list.sort(- stargazers_count) %>>%
+    list.mapv(name)
+    
+## fuzzy searching by sound of word
+repos %>>%
+    list.filter(!fork) %>>%
+    list.filter(stringdist::stringdist("player", name, method = "soundex") == 0L) %>>%
+    list.mapv(name)
+```
 
 ## rvest
 
+```{r}
+library(rvest)
+
+## get data
+url <- "http://cran.r-project.org/web/packages/available_packages_by_date.html"
+
+Pipe(url)$
+    .(~ message(Sys.time(), ": downloading"))$
+    html()$
+    html_nodes(xpath = "//tr//td[3]")$
+    .(~ message("Number of Packages: ", length(.)))$
+    html_text(trim = TRUE)$
+    .(~ message(Sys.time(), ": text extracted"))$
+    list.map(Pipe(.)$
+             strsplit("[^a-zA-Z]")$
+             unlist(use.names = FALSE)$
+             tolower()$
+             list.filter(nchar(.) > 3L)$
+             value)$
+    ## put everything in a large character vector
+    unlist()$
+    ## create a table of word count
+    table()$
+    sort(decreasing = TRUE)$
+    head(50)$
+    .(~ message(Sys.time(), ": task complete"))
+```
